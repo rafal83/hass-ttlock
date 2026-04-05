@@ -68,9 +68,11 @@ class Test_configure_autolock:
         coordinator = await component_setup()
         entity_id = coordinator.entities[0].entity_id
 
-        with patch(
-            "custom_components.ttlock.api.TTLockApi.set_auto_lock", return_value=True
-        ) as mock:
+        # Initialize the gateway locks dict if not present
+        if not hasattr(coordinator.api, "_gateway_locks"):
+            coordinator.api._gateway_locks = {}
+
+        with patch.object(coordinator.api, "set_auto_lock", return_value=True) as mock:
             await hass.services.async_call(
                 DOMAIN,
                 SVC_CONFIG_AUTOLOCK,
@@ -80,7 +82,7 @@ class Test_configure_autolock:
                 },
             )
             await hass.async_block_till_done()
-            assert mock.call_args_list == [call(coordinator.lock_id, seconds_expected)]
+            mock.assert_called_once_with(coordinator.lock_id, seconds_expected)
 
 
 class Test_list_passcodes:

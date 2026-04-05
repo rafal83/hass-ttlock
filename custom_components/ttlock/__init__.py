@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client, config_entry_oauth2_flow
+import homeassistant.helpers.config_validation as cv
 
 from .api import TTLockApi
 from .const import DOMAIN, TT_API, TT_LOCKS
@@ -24,6 +25,9 @@ PLATFORMS: list[Platform] = [
 ]
 
 _LOGGER = logging.getLogger(__name__)
+
+# This integration can only be configured through the UI (config entries)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 def setup(hass: HomeAssistant, config: ConfigEntry) -> bool:
