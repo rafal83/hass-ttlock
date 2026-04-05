@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Start a discussion (config, doubts, docs)
-    url: https://github.com/jbergler/hass-ttlock/discussions
+    url: https://github.com/rafal83/hass-ttlock/discussions
     about: If you have general questions, or are unsure about whether a bug report is the right thing to open, click here to create a Discussion instead of an Issue.
+  - name: Home Assistant Documentation
+    url: https://www.home-assistant.io/docs/
+    about: General Home Assistant documentation.
+  - name: TTLock Documentation
+    url: https://github.com/rafal83/hass-ttlock#readme
+    about: TTLock integration documentation.

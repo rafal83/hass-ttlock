@@ -1,9 +1,9 @@
 ---
-name: Issue
-about: Report a bug
+name: Bug Report
+about: Report a bug or issue with the TTLock integration
 title: ""
-labels: ""
-assignees: jbergler
+labels: bug
+assignees: ""
 ---
 
 <!--- Bug reports which do not follow this template will be closed -->
@@ -25,6 +25,15 @@ Steps to reproduce the behavior:
 
 A clear and concise description of what you expected to happen.
 
+## Environment
+
+<!--- Please provide the following information -->
+
+- Home Assistant version: 
+- TTLock integration version: 
+- Installation type (HACS/manual): 
+- Lock model (if known): 
+
 ## Required information
 
 <!---
@@ -35,4 +44,5 @@ Documentation for how to gather this information is found at https://www.home-as
 Please provide:
 
 - Debug logs reproducing the issue. For most issues, it is required to enable debug logging, and reload the extension so we capture the required information.
-- The diagnostic info for ttlock.
+- The diagnostic info for ttlock (downloadable from the integration page in Home Assistant).
+
