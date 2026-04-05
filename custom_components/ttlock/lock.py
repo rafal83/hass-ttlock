@@ -1,7 +1,8 @@
-"""The actual lock part of the locks."""
+"""Support for TTLock locks."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from homeassistant.components.lock import LockEntity
@@ -11,6 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import lock_coordinators
 from .entity import BaseLockEntity
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -42,8 +45,16 @@ class Lock(BaseLockEntity, LockEntity):
 
     async def async_lock(self, **kwargs: Any) -> None:
         """Try to lock the lock."""
-        await self.coordinator.lock()
+        try:
+            await self.coordinator.lock()
+        except Exception as err:
+            _LOGGER.error("Failed to lock %s: %s", self.entity_id, err)
+            raise
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Try to unlock the lock."""
-        await self.coordinator.unlock()
+        try:
+            await self.coordinator.unlock()
+        except Exception as err:
+            _LOGGER.error("Failed to unlock %s: %s", self.entity_id, err)
+            raise

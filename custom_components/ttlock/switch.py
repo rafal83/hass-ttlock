@@ -1,4 +1,4 @@
-"""Switch setup for our Integration."""
+"""Support for TTLock switches."""
 
 from __future__ import annotations
 
@@ -38,11 +38,28 @@ class AutoLock(BaseLockEntity, SwitchEntity):
     _attr_device_class = SwitchDeviceClass.SWITCH
 
     @property
-    def extra_state_attributes(self):
-        """Define any extra state sttr."""
-        attributes = {}
-        attributes["seconds"] = self.coordinator.data.auto_lock_seconds
-        return attributes
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes."""
+        return {
+            "seconds": self.coordinator.data.auto_lock_seconds,
+        }
+
+    @property
+    def auto_lock_duration(self) -> str | None:
+        """Return auto-lock duration as formatted string."""
+        if self.coordinator.data.auto_lock_seconds is None:
+            return None
+        if self.coordinator.data.auto_lock_seconds == 0:
+            return "Off"
+        # Convert seconds to human-readable format
+        seconds = self.coordinator.data.auto_lock_seconds
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes = seconds // 60
+        remaining = seconds % 60
+        if remaining == 0:
+            return f"{minutes}m"
+        return f"{minutes}m {remaining}s"
 
     def _update_from_coordinator(self) -> None:
         """Fetch state from the device."""

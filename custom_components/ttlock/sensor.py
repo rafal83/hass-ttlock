@@ -1,4 +1,4 @@
-"""Support for iCloud sensors."""
+"""Support for TTLock sensors."""
 
 from __future__ import annotations
 
@@ -108,6 +108,10 @@ class SensorBattery(BaseLockEntity, SensorEntity):
         self._attr_name = f"{self.coordinator.data.name} Sensor Battery"
         self._attr_native_value = (
             self.coordinator.data.sensor.battery
-            if self.coordinator.data.sensor
+            if self.coordinator.data.sensor and self.coordinator.data.sensor.present
             else None
+        )
+        self._attr_available = (
+            self.coordinator.data.sensor is not None
+            and self.coordinator.data.sensor.present
         )

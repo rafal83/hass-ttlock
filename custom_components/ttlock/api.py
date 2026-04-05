@@ -10,7 +10,8 @@ import time
 from typing import Any, cast
 from urllib.parse import urljoin
 
-from aiohttp import ClientResponse, ClientSession
+import aiohttp
+from aiohttp import ClientResponse, ClientSession, ClientTimeout
 
 from homeassistant.components.application_credentials import AuthImplementation
 from homeassistant.helpers import config_entry_oauth2_flow
@@ -27,7 +28,35 @@ from .models import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-GW_LOCK = asyncio.Lock()
+REQUEST_TIMEOUT = ClientTimeout(total=30)
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 1  # seconds
+
+
+async def _with_retry(func, log_id: str):
+    """Execute function with retry logic and exponential backoff."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            return await func()
+        except (aiohttp.ClientError, TimeoutError) as err:
+            if attempt == MAX_RETRIES - 1:
+                _LOGGER.error(
+                    "[%s] Request failed after %d attempts: %s",
+                    log_id,
+                    MAX_RETRIES,
+                    err,
+                )
+                raise
+            wait_time = RETRY_BACKOFF_BASE * (2**attempt)
+            _LOGGER.debug(
+                "[%s] Request failed (attempt %d/%d), retrying in %ds: %s",
+                log_id,
+                attempt + 1,
+                MAX_RETRIES,
+                wait_time,
+                err,
+            )
+            await asyncio.sleep(wait_time)
 
 
 class RequestFailed(Exception):
@@ -80,6 +109,7 @@ class TTLockApi:
         """Initialize TTLock auth."""
         self._web_session = websession
         self._oauth_session = oauth_session
+        self._gateway_locks: dict[int, asyncio.Lock] = {}
 
     async def async_get_access_token(self) -> str:
         """Return a valid access token."""
@@ -87,6 +117,12 @@ class TTLockApi:
             await self._oauth_session.async_ensure_token_valid()
 
         return self._oauth_session.token["access_token"]
+
+    def _get_gateway_lock(self, lock_id: int) -> asyncio.Lock:
+        """Get or create a per-lock gateway lock."""
+        if lock_id not in self._gateway_locks:
+            self._gateway_locks[lock_id] = asyncio.Lock()
+        return self._gateway_locks[lock_id]
 
     async def _add_auth(self, **kwargs) -> dict:
         kwargs["clientId"] = self._oauth_session.implementation.client_id
@@ -119,27 +155,39 @@ class TTLockApi:
         """Make GET request to the API with kwargs as query params."""
         log_id = token_hex(2)
 
-        url = urljoin(self.BASE, path)
-        _LOGGER.debug("[%s] Sending request to %s with args=%s", log_id, url, kwargs)
-        resp = await self._web_session.get(
-            url,
-            params=await self._add_auth(**kwargs),
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        return await self._parse_resp(resp, log_id)
+        async def _do_get():
+            url = urljoin(self.BASE, path)
+            _LOGGER.debug(
+                "[%s] Sending request to %s with args=%s", log_id, url, kwargs
+            )
+            resp = await self._web_session.get(
+                url,
+                params=await self._add_auth(**kwargs),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=REQUEST_TIMEOUT,
+            )
+            return await self._parse_resp(resp, log_id)
+
+        return await _with_retry(_do_get, log_id)
 
     async def post(self, path: str, **kwargs: Any) -> Mapping[str, Any]:
-        """Make GET request to the API with kwargs as query params."""
+        """Make POST request to the API with kwargs as data."""
         log_id = token_hex(2)
 
-        url = urljoin(self.BASE, path)
-        _LOGGER.debug("[%s] Sending request to %s with args=%s", log_id, url, kwargs)
-        resp = await self._web_session.post(
-            url,
-            params=await self._add_auth(),
-            data=kwargs,
-        )
-        return await self._parse_resp(resp, log_id)
+        async def _do_post():
+            url = urljoin(self.BASE, path)
+            _LOGGER.debug(
+                "[%s] Sending request to %s with args=%s", log_id, url, kwargs
+            )
+            resp = await self._web_session.post(
+                url,
+                params=await self._add_auth(),
+                data=kwargs,
+                timeout=REQUEST_TIMEOUT,
+            )
+            return await self._parse_resp(resp, log_id)
+
+        return await _with_retry(_do_post, log_id)
 
     async def get_locks(self) -> list[int]:
         """Enumerate all locks in the account."""
@@ -171,7 +219,7 @@ class TTLockApi:
 
     async def get_lock_state(self, lock_id: int) -> LockState:
         """Get the state of a lock."""
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             res = await self.get("lock/queryOpenState", lockId=lock_id)
         return LockState.model_validate(res)
 
@@ -182,7 +230,7 @@ class TTLockApi:
 
     async def lock(self, lock_id: int) -> bool:
         """Try to lock the lock."""
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             res = await self.get("lock/lock", lockId=lock_id)
 
         if "errcode" in res and res["errcode"] != 0:
@@ -193,7 +241,7 @@ class TTLockApi:
 
     async def unlock(self, lock_id: int) -> bool:
         """Try to unlock the lock."""
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             res = await self.get("lock/unlock", lockId=lock_id)
 
         if "errcode" in res and res["errcode"] != 0:
@@ -205,7 +253,7 @@ class TTLockApi:
     async def set_passage_mode(self, lock_id: int, config: PassageModeConfig) -> bool:
         """Configure passage mode."""
 
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             res = await self.post(
                 "lock/configPassageMode",
                 lockId=lock_id,
@@ -219,7 +267,7 @@ class TTLockApi:
             )
 
         if "errcode" in res and res["errcode"] != 0:
-            _LOGGER.error("Failed to unlock %s: %s", lock_id, res["errmsg"])
+            _LOGGER.error("Failed to set passage mode %s: %s", lock_id, res["errmsg"])
             return False
 
         return True
@@ -227,7 +275,7 @@ class TTLockApi:
     async def add_passcode(self, lock_id: int, config: AddPasscodeConfig) -> bool:
         """Add new passcode."""
 
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             params: dict[str, Any] = {
                 "lockId": lock_id,
                 "addType": 2,  # via gateway
@@ -260,7 +308,7 @@ class TTLockApi:
     ) -> bool:
         """Modify an existing passcode."""
 
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             params: dict[str, Any] = {
                 "lockId": lock_id,
                 "changeType": 2,  # via gateway
@@ -298,7 +346,7 @@ class TTLockApi:
     async def delete_passcode(self, lock_id: int, passcode_id: int) -> bool:
         """Delete a passcode from lock."""
 
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             resDel = await self.post(
                 "keyboardPwd/delete",
                 lockId=lock_id,
@@ -319,7 +367,7 @@ class TTLockApi:
     async def set_auto_lock(self, lock_id: int, seconds: int) -> bool:
         """Set the AutoLock feature of the lock."""
 
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             res = await self.post(
                 "lock/setAutoLockTime",
                 lockId=lock_id,
@@ -340,7 +388,7 @@ class TTLockApi:
     async def set_lock_sound(self, lock_id: int, value: int) -> bool:
         """Set the LockSound feature of the lock."""
 
-        async with GW_LOCK:
+        async with self._get_gateway_lock(lock_id):
             res = await self.post(
                 "lock/updateSetting",
                 lockId=lock_id,

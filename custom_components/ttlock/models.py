@@ -83,8 +83,7 @@ class Lock(BaseModel):
     passageModeAutoUnlock: OnOff = OnOff.unknown
     date: int
 
-    # sensitive fields
-    noKeyPwd: str = Field(alias="adminPwd")
+    # Note: adminPwd field is intentionally excluded for security
 
 
 class Sensor(BaseModel):

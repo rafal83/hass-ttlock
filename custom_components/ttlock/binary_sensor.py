@@ -1,4 +1,4 @@
-"""Support for iCloud sensors."""
+"""Support for TTLock binary sensors."""
 
 from __future__ import annotations
 
@@ -52,6 +52,10 @@ class Sensor(BaseLockEntity, BinarySensorEntity):
             bool(self.coordinator.data.sensor.opened)
             if self.coordinator.data.sensor
             else False
+        )
+        self._attr_available = (
+            self.coordinator.data.sensor is not None
+            and self.coordinator.data.sensor.present
         )
 
 

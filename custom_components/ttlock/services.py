@@ -1,7 +1,10 @@
-"""Services for ttlock integration."""
+"""Services for TTLock integration."""
+
+from __future__ import annotations
 
 from datetime import time
 import logging
+from typing import Any
 
 import voluptuous as vol
 
@@ -232,23 +235,31 @@ class Services:
     async def handle_list_passcodes(self, call: ServiceCall) -> ServiceResponse:
         """List all passcodes for the selected locks."""
         passcodes = {}
+        errors = {}
 
         for entity_id, coordinator in self._get_coordinators(call).items():
-            codes = await coordinator.api.list_passcodes(coordinator.lock_id)
-            passcodes[entity_id] = [
-                {
-                    "name": code.name,
-                    "id": code.id,
-                    "passcode": code.passcode,
-                    "type": code.type.name if code.type is not None else None,
-                    "start_date": code.start_date,
-                    "end_date": code.end_date,
-                    "expired": code.expired,
-                }
-                for code in codes
-            ]
+            try:
+                codes = await coordinator.api.list_passcodes(coordinator.lock_id)
+                passcodes[entity_id] = [
+                    {
+                        "name": code.name,
+                        "id": code.id,
+                        "passcode": code.passcode,
+                        "type": code.type.name if code.type is not None else None,
+                        "start_date": code.start_date,
+                        "end_date": code.end_date,
+                        "expired": code.expired,
+                    }
+                    for code in codes
+                ]
+            except Exception as err:
+                _LOGGER.error("Failed to list passcodes for %s: %s", entity_id, err)
+                errors[entity_id] = str(err)
 
-        return {"passcodes": passcodes}
+        result: dict[str, Any] = {"passcodes": passcodes}
+        if errors:
+            result["errors"] = errors
+        return result
 
     async def handle_configure_passage_mode(self, call: ServiceCall):
         """Enable passage mode for the given entities."""
@@ -265,10 +276,15 @@ class Services:
             weekDays=days,
         )
 
-        for _entity_id, coordinator in self._get_coordinators(call).items():
-            if await coordinator.api.set_passage_mode(coordinator.lock_id, config):
-                coordinator.data.passage_mode_config = config
-                coordinator.async_update_listeners()
+        for entity_id, coordinator in self._get_coordinators(call).items():
+            try:
+                if await coordinator.api.set_passage_mode(coordinator.lock_id, config):
+                    coordinator.data.passage_mode_config = config
+                    coordinator.async_update_listeners()
+            except Exception as err:
+                _LOGGER.error(
+                    "Failed to configure passage mode for %s: %s", entity_id, err
+                )
 
     async def handle_create_passcode(self, call: ServiceCall):
         """Create a new passcode for the given entities."""
@@ -294,8 +310,11 @@ class Services:
             endDate=end_time,
         )
 
-        for _entity_id, coordinator in self._get_coordinators(call).items():
-            await coordinator.api.add_passcode(coordinator.lock_id, config)
+        for entity_id, coordinator in self._get_coordinators(call).items():
+            try:
+                await coordinator.api.add_passcode(coordinator.lock_id, config)
+            except Exception as err:
+                _LOGGER.error("Failed to create passcode for %s: %s", entity_id, err)
 
     async def handle_modify_passcode(self, call: ServiceCall):
         """Modify an existing passcode for the given entities."""
@@ -323,36 +342,58 @@ class Services:
 
         passcode_id = call.data.get("passcode_id")
 
-        for _entity_id, coordinator in self._get_coordinators(call).items():
-            await coordinator.api.modify_passcode(
-                coordinator.lock_id, passcode_id, config
-            )
+        for entity_id, coordinator in self._get_coordinators(call).items():
+            try:
+                await coordinator.api.modify_passcode(
+                    coordinator.lock_id, passcode_id, config
+                )
+            except Exception as err:
+                _LOGGER.error("Failed to modify passcode for %s: %s", entity_id, err)
 
     async def handle_delete_passcode(self, call: ServiceCall):
         """Delete a specific passcode from the given entities."""
 
         passcode_id = call.data.get("passcode_id")
 
-        for _entity_id, coordinator in self._get_coordinators(call).items():
-            await coordinator.api.delete_passcode(coordinator.lock_id, passcode_id)
+        for entity_id, coordinator in self._get_coordinators(call).items():
+            try:
+                await coordinator.api.delete_passcode(coordinator.lock_id, passcode_id)
+            except Exception as err:
+                _LOGGER.error("Failed to delete passcode for %s: %s", entity_id, err)
 
     async def handle_cleanup_passcodes(self, call: ServiceCall) -> ServiceResponse:
         """Clean up expired passcodes for the given entities."""
         removed = {}
+        errors = {}
 
         for entity_id, coordinator in self._get_coordinators(call).items():
-            removed_for_lock = []
-            codes = await coordinator.api.list_passcodes(coordinator.lock_id)
-            for code in codes:
-                if code.expired and code.id is not None:
-                    if await coordinator.api.delete_passcode(
-                        coordinator.lock_id, code.id
-                    ):
-                        removed_for_lock.append(code.name)
-            if removed_for_lock:
-                removed[entity_id] = removed_for_lock
+            try:
+                removed_for_lock = []
+                codes = await coordinator.api.list_passcodes(coordinator.lock_id)
+                for code in codes:
+                    if code.expired and code.id is not None:
+                        try:
+                            if await coordinator.api.delete_passcode(
+                                coordinator.lock_id, code.id
+                            ):
+                                removed_for_lock.append(code.name)
+                        except Exception as del_err:
+                            _LOGGER.error(
+                                "Failed to delete expired passcode '%s' for %s: %s",
+                                code.name,
+                                entity_id,
+                                del_err,
+                            )
+                if removed_for_lock:
+                    removed[entity_id] = removed_for_lock
+            except Exception as err:
+                _LOGGER.error("Failed to cleanup passcodes for %s: %s", entity_id, err)
+                errors[entity_id] = str(err)
 
-        return {"removed": removed}
+        result: dict[str, Any] = {"removed": removed}
+        if errors:
+            result["errors"] = errors
+        return result
 
     async def handle_configure_autolock(self, call: ServiceCall):
         """Set the autolock seconds."""
@@ -362,51 +403,73 @@ class Services:
         else:
             seconds = 0
 
-        for coordinator in self._get_coordinators(call).values():
-            if await coordinator.api.set_auto_lock(coordinator.lock_id, seconds):
-                coordinator.data.auto_lock_seconds = seconds
-                coordinator.async_update_listeners()
+        for entity_id, coordinator in self._get_coordinators(call).values():
+            try:
+                if await coordinator.api.set_auto_lock(coordinator.lock_id, seconds):
+                    coordinator.data.auto_lock_seconds = seconds
+                    coordinator.async_update_listeners()
+            except Exception as err:
+                _LOGGER.error("Failed to configure autolock for %s: %s", entity_id, err)
 
     async def handle_list_records(self, call: ServiceCall) -> ServiceResponse:
         """List records for the selected locks."""
         records = {}
-        params = {}
+        errors = {}
 
         # Convert datetime parameters to millisecond timestamps if provided
         if start_date := call.data.get("start_date"):
-            params["start_date"] = int(as_utc(start_date).timestamp() * 1000)
+            start_timestamp = int(as_utc(start_date).timestamp() * 1000)
+        else:
+            start_timestamp = None
+
         if end_date := call.data.get("end_date"):
-            params["end_date"] = int(as_utc(end_date).timestamp() * 1000)
+            end_timestamp = int(as_utc(end_date).timestamp() * 1000)
+        else:
+            end_timestamp = None
 
         # Get pagination values from call data with defaults
-        params["page_no"] = call.data.get("page_no", 1)
-        params["page_size"] = min(call.data.get("page_size", 50), 200)
+        page_no = call.data.get("page_no", 1)
+        page_size = min(call.data.get("page_size", 50), 200)
 
         for entity_id, coordinator in self._get_coordinators(call).items():
-            lock_records = await coordinator.api.get_lock_records(
-                coordinator.lock_id, **params
-            )
-            records[entity_id] = [
-                {
-                    "id": record.id,
-                    "lock_id": record.lock_id,
-                    "record_type": record.record_type.name
-                    if record.record_type is not None
-                    else None,
-                    "success": record.success,
-                    "username": record.username,
-                    "keyboard_pwd": record.keyboard_pwd,
-                    "lock_date": record.lock_date,
-                    "server_date": record.server_date,
-                }
-                for record in lock_records
-            ]
+            try:
+                lock_records = await coordinator.api.get_lock_records(
+                    coordinator.lock_id,
+                    start_date=start_timestamp,
+                    end_date=end_timestamp,
+                    page_no=page_no,
+                    page_size=page_size,
+                )
+                records[entity_id] = [
+                    {
+                        "id": record.id,
+                        "lock_id": record.lock_id,
+                        "record_type": record.record_type.name
+                        if record.record_type is not None
+                        else None,
+                        "success": record.success,
+                        "username": record.username,
+                        "keyboard_pwd": record.keyboard_pwd,
+                        "lock_date": record.lock_date,
+                        "server_date": record.server_date,
+                    }
+                    for record in lock_records
+                ]
+            except Exception as err:
+                _LOGGER.error("Failed to list records for %s: %s", entity_id, err)
+                errors[entity_id] = str(err)
 
-        return {"records": records}
+        result: dict[str, Any] = {"records": records}
+        if errors:
+            result["errors"] = errors
+        return result
 
     async def handle_update_state(self, call: ServiceCall):
         """Refresh the lock state by calling the coordinator's refresh method."""
-        for _entity_id, coordinator in self._get_coordinators(call).items():
-            # Set the locked state to none to force the API call.
-            coordinator.data.locked = None
-            await coordinator.async_refresh()
+        for entity_id, coordinator in self._get_coordinators(call).items():
+            try:
+                # Set the locked state to none to force the API call.
+                coordinator.data.locked = None
+                await coordinator.async_refresh()
+            except Exception as err:
+                _LOGGER.error("Failed to update state for %s: %s", entity_id, err)

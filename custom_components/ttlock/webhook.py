@@ -1,4 +1,4 @@
-"""The TTLock integration."""
+"""The TTLock integration webhook handler."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class WebhookHandler:
     async def get_url(self) -> str:
         """Get the webhook url depending on the setup."""
         if CONF_WEBHOOK_URL in self.entry.data:
-            return self.entry.data[CONF_WEBHOOK_URL]
+            return str(self.entry.data[CONF_WEBHOOK_URL])
         if cloudhook := await self.try_generate_cloudhook():
             return cloudhook
         else:
@@ -103,15 +103,22 @@ class WebhookHandler:
         _LOGGER.info("Webhook registered at %s", webhook_url)
 
         # Ensure the webhook is not registered already
-        webhook_unregister(self.hass, self.entry.data[CONF_WEBHOOK_ID])
+        try:
+            webhook_unregister(self.hass, self.entry.data[CONF_WEBHOOK_ID])
+        except ValueError:
+            _LOGGER.debug("Webhook was not registered, continuing")
 
-        webhook_register(
-            self.hass,
-            DOMAIN,
-            "TTLock",
-            self.entry.data[CONF_WEBHOOK_ID],
-            self.handle_webhook,
-        )
+        try:
+            webhook_register(
+                self.hass,
+                DOMAIN,
+                "TTLock",
+                self.entry.data[CONF_WEBHOOK_ID],
+                self.handle_webhook,
+            )
+        except ValueError as err:
+            _LOGGER.error("Failed to register webhook: %s", err)
+            return
 
         self.hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_STOP, self.unregister_webhook
@@ -137,6 +144,9 @@ class WebhookHandler:
                 _LOGGER.debug("handle_webhook, empty payload: %s", await request.text())
         except ValueError as ex:
             _LOGGER.exception("Exception parsing webhook data: %s", ex)
+            return
+        except Exception as ex:
+            _LOGGER.exception("Unexpected error handling webhook: %s", ex)
             return
 
         if success and CONF_WEBHOOK_STATUS not in self.entry.data:
