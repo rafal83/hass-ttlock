@@ -63,16 +63,17 @@ class Test_configure_autolock:
         params,
         seconds_expected,
     ):
-        """Test creating a passcode."""
+        """Test configuring autolock."""
         mock_api_responses("default")
         coordinator = await component_setup()
         entity_id = coordinator.entities[0].entity_id
 
-        # Initialize the gateway locks dict if not present
-        if not hasattr(coordinator.api, "_gateway_locks"):
-            coordinator.api._gateway_locks = {}
-
-        with patch.object(coordinator.api, "set_auto_lock", return_value=True) as mock:
+        # Call the API method through the coordinator
+        with patch.object(
+            coordinator.api,
+            "set_auto_lock",
+            return_value=True,
+        ) as api_mock:
             await hass.services.async_call(
                 DOMAIN,
                 SVC_CONFIG_AUTOLOCK,
@@ -80,9 +81,14 @@ class Test_configure_autolock:
                     ATTR_ENTITY_ID: entity_id,
                     **params,
                 },
+                blocking=True,
             )
-            await hass.async_block_till_done()
-            mock.assert_called_once_with(coordinator.lock_id, seconds_expected)
+            # Verify API was called with correct parameters
+            api_mock.assert_called_once_with(
+                coordinator.lock_id, seconds_expected
+            )
+            # Verify coordinator was updated
+            assert coordinator.data.auto_lock_seconds == seconds_expected
 
 
 class Test_list_passcodes:

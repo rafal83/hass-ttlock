@@ -403,7 +403,7 @@ class Services:
         else:
             seconds = 0
 
-        for entity_id, coordinator in self._get_coordinators(call).values():
+        for entity_id, coordinator in self._get_coordinators(call).items():
             try:
                 if await coordinator.api.set_auto_lock(coordinator.lock_id, seconds):
                     coordinator.data.auto_lock_seconds = seconds
