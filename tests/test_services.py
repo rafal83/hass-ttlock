@@ -84,9 +84,7 @@ class Test_configure_autolock:
                 blocking=True,
             )
             # Verify API was called with correct parameters
-            api_mock.assert_called_once_with(
-                coordinator.lock_id, seconds_expected
-            )
+            api_mock.assert_called_once_with(coordinator.lock_id, seconds_expected)
             # Verify coordinator was updated
             assert coordinator.data.auto_lock_seconds == seconds_expected
 
